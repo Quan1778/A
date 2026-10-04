@@ -1,0 +1,1878 @@
+-- ====================================================
+-- CẤU HÌNH JSON & KHỞI TẠO DỊCH VỤ
+-- ====================================================
+local HttpService = game:GetService("HttpService")
+
+local ICON_JSON_CONFIG = [[
+{
+    "BubbleIcon": {
+        "WebUrl": "",
+        "LocalFileName": "Icon/thumb-1920-247918.png",
+        "FallbackAsset": "rbxassetid://6031097225"
+    },
+    "ResetIcon": {
+        "WebUrl": "",
+        "LocalFileName": "Icon/reset_icon.png",
+        "FallbackAsset": "rbxassetid://6031094678"
+    }
+}
+]]
+
+local IconConfig = HttpService:JSONDecode(ICON_JSON_CONFIG)
+
+local TweenService = game:GetService("TweenService")
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local CoreGui = game:GetService("CoreGui")
+local StatsService = game:GetService("Stats")
+local LocalPlayer = Players.LocalPlayer
+local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+local NAME = "AquaTeleportControlV11"
+
+local getHui = gethui or get_hidden_gui
+local TargetParent = getHui and getHui() or (pcall(function() return CoreGui.Name end) and CoreGui or PlayerGui)
+
+-- Dọn dẹp Gui cũ
+for _,parent in ipairs({CoreGui, PlayerGui, TargetParent}) do
+	pcall(function()
+		local old = parent:FindFirstChild(NAME)
+		if old then old:Destroy() end
+		local oldNotif = parent:FindFirstChild(NAME .. "_NotifGui")
+		if oldNotif then oldNotif:Destroy() end
+	end)
+end
+
+local function getImageAsset(cfg)
+	if not cfg then return "" end
+	if getcustomasset and isfile then
+		if makefolder and cfg.LocalFileName and cfg.LocalFileName ~= "" and string.find(cfg.LocalFileName, "/") then
+			local folderName = string.match(cfg.LocalFileName, "^(.*)/")
+			if folderName and isfolder and not isfolder(folderName) then
+				pcall(function() makefolder(folderName) end)
+			end
+		end
+
+		if cfg.LocalFileName and cfg.LocalFileName ~= "" then
+			local exists = false
+			pcall(function() exists = isfile(cfg.LocalFileName) end)
+			if exists then
+				local success, asset = pcall(function() return getcustomasset(cfg.LocalFileName) end)
+				if success and asset then return asset end
+			end
+		end
+		
+		if writefile and game.HttpGet and cfg.WebUrl and cfg.WebUrl ~= "" and cfg.LocalFileName and cfg.LocalFileName ~= "" then
+			local success, bytes = pcall(function() return game:HttpGet(cfg.WebUrl) end)
+			if success and bytes and #bytes > 0 then
+				pcall(function() writefile(cfg.LocalFileName, bytes) end)
+				local exists = false
+				pcall(function() exists = isfile(cfg.LocalFileName) end)
+				if exists then
+					local successAsset, asset = pcall(function() return getcustomasset(cfg.LocalFileName) end)
+					if successAsset and asset then return asset end
+				end
+			end
+		end
+	end
+	return (cfg.FallbackAsset and cfg.FallbackAsset ~= "") and cfg.FallbackAsset or ""
+end
+
+-- ScreenGui Chính
+local Gui = Instance.new("ScreenGui")
+Gui.Name = NAME
+Gui.ResetOnSpawn = false
+Gui.IgnoreGuiInset = true
+Gui.DisplayOrder = 999999
+Gui.Parent = TargetParent
+
+-- ScreenGui Thông Báo Độc Lập
+local NotifGui = Instance.new("ScreenGui")
+NotifGui.Name = NAME .. "_NotifGui"
+NotifGui.ResetOnSpawn = false
+NotifGui.IgnoreGuiInset = true
+NotifGui.DisplayOrder = 10000000
+NotifGui.Parent = TargetParent
+
+local Scale = Instance.new("UIScale", Gui)
+local function resize()
+	local c = workspace.CurrentCamera
+	if c then
+		local v = c.ViewportSize
+		Scale.Scale = math.clamp(math.min(v.X/720, v.Y/520), .65, 1.05)
+	end
+end
+resize()
+pcall(function()
+	workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(resize)
+end)
+
+local C = {
+	bg = Color3.fromRGB(10,15,23), panel = Color3.fromRGB(17,25,36),
+	panel2 = Color3.fromRGB(22,32,46), aqua = Color3.fromRGB(0,205,255),
+	dark = Color3.fromRGB(0,120,165), text = Color3.fromRGB(235,245,250),
+	muted = Color3.fromRGB(145,170,190), green = Color3.fromRGB(40,205,110),
+	red = Color3.fromRGB(240,75,75), hover = Color3.fromRGB(32,46,66),
+	sidebar = Color3.fromRGB(13,19,29)
+}
+
+-- ====================================================
+-- HỆ THỐNG TOAST NOTIFICATION ENGINE
+-- ====================================================
+local NotifContainer = Instance.new("Frame", NotifGui)
+NotifContainer.Name = "NotifContainer"
+NotifContainer.Size = UDim2.new(0, 220, 1, 0)
+NotifContainer.Position = UDim2.new(1, -230, 0, 20)
+NotifContainer.BackgroundTransparency = 1
+NotifContainer.ZIndex = 10000
+
+local NotifLayout = Instance.new("UIListLayout", NotifContainer)
+NotifLayout.SortOrder = Enum.SortOrder.LayoutOrder
+NotifLayout.Padding = UDim.new(0, 6)
+NotifLayout.HorizontalAlignment = Enum.HorizontalAlignment.Right
+
+local function corner(o, r)
+	local x = Instance.new("UICorner", o)
+	x.CornerRadius = UDim.new(0, r or 8)
+end
+
+local function notify(message, isSuccess)
+	task.spawn(function()
+		local notif = Instance.new("Frame", NotifContainer)
+		notif.AnchorPoint = Vector2.new(1, 0)
+		notif.Position = UDim2.new(1, 0, 0, 0)
+		notif.Size = UDim2.new(0, 0, 0, 28)
+		notif.BackgroundColor3 = isSuccess and Color3.fromRGB(40, 200, 90) or Color3.fromRGB(235, 60, 60)
+		notif.BorderSizePixel = 0
+		notif.ClipsDescendants = true
+		corner(notif, 4)
+
+		local icon = Instance.new("TextLabel", notif)
+		icon.Size = UDim2.fromOffset(24, 28)
+		icon.Position = UDim2.fromOffset(4, 0)
+		icon.BackgroundTransparency = 1
+		icon.Text = isSuccess and "✓" or "✕"
+		icon.TextColor3 = Color3.fromRGB(20, 20, 20)
+		icon.Font = Enum.Font.GothamBold
+		icon.TextSize = 14
+
+		local lbl = Instance.new("TextLabel", notif)
+		lbl.Size = UDim2.new(1, -32, 1, 0)
+		lbl.Position = UDim2.fromOffset(28, 0)
+		lbl.BackgroundTransparency = 1
+		lbl.Text = message
+		lbl.TextColor3 = Color3.fromRGB(15, 15, 15)
+		lbl.Font = Enum.Font.GothamBold
+		lbl.TextSize = 11
+		lbl.TextXAlignment = Enum.TextXAlignment.Left
+
+		local showTween = TweenService:Create(notif, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+			Size = UDim2.new(0, 180, 0, 28)
+		})
+		showTween:Play()
+
+		task.wait(2.0)
+
+		local hideTween = TweenService:Create(notif, TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+			Size = UDim2.new(0, 0, 0, 28)
+		})
+		hideTween:Play()
+		hideTween.Completed:Wait()
+		
+		notif:Destroy()
+	end)
+end
+
+-- ====================================================
+-- TÍNH NĂNG PLAYER MODS (MAIN)
+-- ====================================================
+local walkSpeedValue = 16
+local jumpPowerValue = 50
+local infJumpEnabled = false
+local noClipEnabled = false
+local flyEnabled = false
+local flySpeed = 50
+local antiAfkEnabled = false
+local freezeEnabled = false
+local flyConnection = nil
+local antiAfkConn = nil
+
+UserInputService.JumpRequest:Connect(function()
+	if infJumpEnabled then
+		local char = LocalPlayer.Character
+		local h = char and char:FindFirstChildOfClass("Humanoid")
+		if h then
+			h:ChangeState(Enum.HumanoidStateType.Jumping)
+		end
+	end
+end)
+
+RunService.Stepped:Connect(function()
+	if noClipEnabled then
+		local char = LocalPlayer.Character
+		if char then
+			for _, part in ipairs(char:GetDescendants()) do
+				if part:IsA("BasePart") then
+					part.CanCollide = false
+				end
+			end
+		end
+	end
+end)
+
+local function toggleFly(state)
+	flyEnabled = state
+	local char = LocalPlayer.Character
+	local hrp = char and char:FindFirstChild("HumanoidRootPart")
+	if not hrp then return end
+
+	if flyEnabled then
+		local bv = Instance.new("BodyVelocity")
+		bv.Name = "AquaFlyBV"
+		bv.MaxForce = Vector3.new(1e9, 1e9, 1e9)
+		bv.Velocity = Vector3.zero
+		bv.Parent = hrp
+
+		local bg = Instance.new("BodyGyro")
+		bg.Name = "AquaFlyBG"
+		bg.MaxTorque = Vector3.new(1e9, 1e9, 1e9)
+		bg.CFrame = hrp.CFrame
+		bg.Parent = hrp
+
+		flyConnection = RunService.RenderStepped:Connect(function()
+			if not flyEnabled or not hrp or not hrp.Parent then
+				if flyConnection then flyConnection:Disconnect(); flyConnection = nil end
+				return
+			end
+			local cam = workspace.CurrentCamera
+			local moveDir = Vector3.zero
+			if UserInputService:IsKeyDown(Enum.KeyCode.W) then moveDir = moveDir + cam.CFrame.LookVector end
+			if UserInputService:IsKeyDown(Enum.KeyCode.S) then moveDir = moveDir - cam.CFrame.LookVector end
+			if UserInputService:IsKeyDown(Enum.KeyCode.A) then moveDir = moveDir - cam.CFrame.RightVector end
+			if UserInputService:IsKeyDown(Enum.KeyCode.D) then moveDir = moveDir + cam.CFrame.RightVector end
+			if UserInputService:IsKeyDown(Enum.KeyCode.Space) then moveDir = moveDir + Vector3.new(0, 1, 0) end
+			if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then moveDir = moveDir - Vector3.new(0, 1, 0) end
+
+			bv.Velocity = moveDir * flySpeed
+			bg.CFrame = cam.CFrame
+		end)
+	else
+		if flyConnection then flyConnection:Disconnect(); flyConnection = nil end
+		if hrp:FindFirstChild("AquaFlyBV") then hrp.AquaFlyBV:Destroy() end
+		if hrp:FindFirstChild("AquaFlyBG") then hrp.AquaFlyBG:Destroy() end
+	end
+end
+
+local function toggleAntiAfk(state)
+	antiAfkEnabled = state
+	if antiAfkEnabled then
+		local VirtualUser = game:GetService("VirtualUser")
+		antiAfkConn = LocalPlayer.Idled:Connect(function()
+			VirtualUser:CaptureController()
+			VirtualUser:ClickButton2(Vector2.zero)
+		end)
+	else
+		if antiAfkConn then
+			antiAfkConn:Disconnect()
+			antiAfkConn = nil
+		end
+	end
+end
+
+local function toggleFreeze(state)
+	freezeEnabled = state
+	local char = LocalPlayer.Character
+	local hrp = char and char:FindFirstChild("HumanoidRootPart")
+	if hrp then
+		hrp.Anchored = freezeEnabled
+	end
+end
+
+local function doSit()
+	local char = LocalPlayer.Character
+	local h = char and char:FindFirstChildOfClass("Humanoid")
+	if h then
+		h.Sit = true
+	end
+end
+
+-- BẢNG CHÍNH
+local Main = Instance.new("Frame", Gui)
+Main.Size = UDim2.fromOffset(700, 460)
+Main.Position = UDim2.new(.5, -350, .5, -230)
+Main.BackgroundColor3 = C.bg
+Main.BorderSizePixel = 0
+corner(Main, 18)
+
+local stroke = Instance.new("UIStroke", Main)
+stroke.Color = C.aqua; stroke.Thickness = 1.5; stroke.Transparency = .2
+
+-- PREVIEW CARD
+local PreviewFrame = Instance.new("Frame", Gui)
+PreviewFrame.Size = UDim2.fromOffset(160, 185)
+PreviewFrame.BackgroundColor3 = C.bg
+PreviewFrame.BorderSizePixel = 0
+PreviewFrame.Visible = false
+PreviewFrame.ZIndex = 10
+corner(PreviewFrame, 14)
+
+local PreviewStroke = Instance.new("UIStroke", PreviewFrame)
+PreviewStroke.Color = C.aqua
+PreviewStroke.Thickness = 1.5
+
+local SkinImage = Instance.new("ImageLabel", PreviewFrame)
+SkinImage.Size = UDim2.fromOffset(110, 110)
+SkinImage.Position = UDim2.fromOffset(25, 10)
+SkinImage.BackgroundTransparency = 1
+SkinImage.ScaleType = Enum.ScaleType.Fit
+SkinImage.ZIndex = 11
+corner(SkinImage, 8)
+
+local InfoName = Instance.new("TextLabel", PreviewFrame)
+InfoName.Size = UDim2.new(1, -10, 0, 18)
+InfoName.Position = UDim2.fromOffset(5, 124)
+InfoName.BackgroundTransparency = 1
+InfoName.TextColor3 = C.text
+InfoName.Font = Enum.Font.GothamBold
+InfoName.TextSize = 11
+InfoName.TextWrapped = true
+InfoName.ZIndex = 11
+
+local InfoUser = Instance.new("TextLabel", PreviewFrame)
+InfoUser.Size = UDim2.new(1, -10, 0, 14)
+InfoUser.Position = UDim2.fromOffset(5, 142)
+InfoUser.BackgroundTransparency = 1
+InfoUser.TextColor3 = C.muted
+InfoUser.Font = Enum.Font.Gotham
+InfoUser.TextSize = 10
+InfoUser.ZIndex = 11
+
+local InfoPos = Instance.new("TextLabel", PreviewFrame)
+InfoPos.Size = UDim2.new(1, -10, 0, 20)
+InfoPos.Position = UDim2.fromOffset(5, 158)
+InfoPos.BackgroundTransparency = 1
+InfoPos.TextColor3 = C.aqua
+InfoPos.Font = Enum.Font.Gotham
+InfoPos.TextSize = 9
+InfoPos.ZIndex = 11
+
+-- HEADER
+local Header = Instance.new("Frame", Main)
+Header.Size = UDim2.new(1, 0, 0, 56)
+Header.BackgroundColor3 = C.panel
+Header.BorderSizePixel = 0
+Header.Active = true
+corner(Header, 18)
+
+local Title = Instance.new("TextLabel", Header)
+Title.Size = UDim2.new(1, -115, 0, 24)
+Title.Position = UDim2.fromOffset(16, 6)
+Title.BackgroundTransparency = 1
+Title.Text = "AQUA CONTROL PANEL"
+Title.TextColor3 = C.aqua
+Title.Font = Enum.Font.GothamBold
+Title.TextSize = 15
+Title.TextXAlignment = Enum.TextXAlignment.Left
+
+local Status = Instance.new("TextLabel", Header)
+Status.Size = UDim2.new(1, -115, 0, 18)
+Status.Position = UDim2.fromOffset(16, 30)
+Status.BackgroundTransparency = 1
+Status.Text = "System Ready"
+Status.TextColor3 = C.muted
+Status.Font = Enum.Font.Gotham
+Status.TextSize = 10
+Status.TextXAlignment = Enum.TextXAlignment.Left
+
+local function button(parent, text, size, pos)
+	local b = Instance.new("TextButton", parent)
+	b.Size = size; b.Position = pos; b.BackgroundColor3 = C.panel2; b.BorderSizePixel = 0
+	b.Text = text; b.TextColor3 = C.text; b.Font = Enum.Font.GothamBold; b.TextSize = 11
+	b.AutoButtonColor = false; b.Active = true; b.Selectable = true
+	corner(b, 10)
+
+	b.MouseEnter:Connect(function()
+		if UserInputService.TouchEnabled then return end
+		TweenService:Create(b, TweenInfo.new(0.15), {BackgroundColor3 = C.hover}):Play()
+	end)
+	b.MouseLeave:Connect(function()
+		if UserInputService.TouchEnabled then return end
+		TweenService:Create(b, TweenInfo.new(0.15), {BackgroundColor3 = C.panel2}):Play()
+	end)
+
+	b.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			TweenService:Create(b, TweenInfo.new(0.08), {
+				BackgroundColor3 = C.dark,
+				Size = UDim2.new(size.X.Scale, size.X.Offset - 2, size.Y.Scale, size.Y.Offset - 2)
+			}):Play()
+		end
+	end)
+	b.InputEnded:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			TweenService:Create(b, TweenInfo.new(0.12), {
+				BackgroundColor3 = C.panel2,
+				Size = size
+			}):Play()
+		end
+	end)
+
+	return b
+end
+
+local Min = button(Header, "−", UDim2.fromOffset(36, 36), UDim2.new(1, -84, 0, 10))
+Min.TextSize = 20
+local Close = button(Header, "×", UDim2.fromOffset(36, 36), UDim2.new(1, -42, 0, 10))
+Close.TextSize = 20
+
+-- SIDEBAR
+local Sidebar = Instance.new("Frame", Main)
+Sidebar.Size = UDim2.fromOffset(125, 392)
+Sidebar.Position = UDim2.fromOffset(12, 60)
+Sidebar.BackgroundColor3 = C.sidebar
+Sidebar.BorderSizePixel = 0
+corner(Sidebar, 12)
+
+local SidebarList = Instance.new("UIListLayout", Sidebar)
+SidebarList.Padding = UDim.new(0, 8)
+SidebarList.SortOrder = Enum.SortOrder.LayoutOrder
+
+local SidebarPadding = Instance.new("UIPadding", Sidebar)
+SidebarPadding.PaddingTop = UDim.new(0, 10)
+SidebarPadding.PaddingLeft = UDim.new(0, 8)
+SidebarPadding.PaddingRight = UDim.new(0, 8)
+
+-- CONTAINER NỘI DUNG
+local ContentContainer = Instance.new("Frame", Main)
+ContentContainer.Size = UDim2.fromOffset(543, 392)
+ContentContainer.Position = UDim2.fromOffset(145, 60)
+ContentContainer.BackgroundTransparency = 1
+
+local PageHome = Instance.new("Frame", ContentContainer)
+PageHome.Size = UDim2.fromScale(1, 1)
+PageHome.BackgroundTransparency = 1
+PageHome.Visible = true
+
+local PageMain = Instance.new("ScrollingFrame", ContentContainer)
+PageMain.Size = UDim2.fromScale(1, 1)
+PageMain.BackgroundTransparency = 1
+PageMain.BorderSizePixel = 0
+PageMain.ScrollBarThickness = 4
+PageMain.ScrollBarImageColor3 = C.aqua
+PageMain.CanvasSize = UDim2.new(0, 0, 0, 0)
+PageMain.AutomaticCanvasSize = Enum.AutomaticSize.Y
+PageMain.Visible = false
+
+local PageMainLayout = Instance.new("UIListLayout", PageMain)
+PageMainLayout.Padding = UDim.new(0, 8)
+PageMainLayout.SortOrder = Enum.SortOrder.LayoutOrder
+
+local PageMainPadding = Instance.new("UIPadding", PageMain)
+PageMainPadding.PaddingTop = UDim.new(0, 4)
+PageMainPadding.PaddingBottom = UDim.new(0, 12)
+PageMainPadding.PaddingLeft = UDim.new(0, 2)
+PageMainPadding.PaddingRight = UDim.new(0, 8)
+
+local PageTeleport = Instance.new("Frame", ContentContainer)
+PageTeleport.Size = UDim2.fromScale(1, 1)
+PageTeleport.BackgroundTransparency = 1
+PageTeleport.Visible = false
+
+local PageESP = Instance.new("Frame", ContentContainer)
+PageESP.Size = UDim2.fromScale(1, 1)
+PageESP.BackgroundTransparency = 1
+PageESP.Visible = false
+
+local tabs = {}
+local function createTabButton(name, layoutOrder)
+	local btn = Instance.new("TextButton", Sidebar)
+	btn.Size = UDim2.new(1, 0, 0, 38)
+	btn.BackgroundColor3 = C.panel
+	btn.BorderSizePixel = 0
+	btn.Text = name
+	btn.TextColor3 = C.muted
+	btn.Font = Enum.Font.GothamBold
+	btn.TextSize = 11
+	btn.LayoutOrder = layoutOrder
+	btn.AutoButtonColor = false
+	corner(btn, 8)
+
+	local indicator = Instance.new("Frame", btn)
+	indicator.Size = UDim2.new(0, 4, 0.6, 0)
+	indicator.Position = UDim2.new(0, 2, 0.2, 0)
+	indicator.BackgroundColor3 = C.aqua
+	indicator.BorderSizePixel = 0
+	indicator.Visible = false
+	corner(indicator, 2)
+
+	tabs[name] = {Button = btn, Indicator = indicator}
+	return btn
+end
+
+local TabHomeBtn = createTabButton("HOME", 1)
+local TabMainBtn = createTabButton("MAIN", 2)
+local TabTPBtn = createTabButton("TELEPORT", 3)
+local TabESPBtn = createTabButton("ESP", 4)
+
+local function switchTab(tabName)
+	for name, data in pairs(tabs) do
+		if name == tabName then
+			data.Button.BackgroundColor3 = C.panel2
+			data.Button.TextColor3 = C.aqua
+			data.Indicator.Visible = true
+		else
+			data.Button.BackgroundColor3 = C.panel
+			data.Button.TextColor3 = C.muted
+			data.Indicator.Visible = false
+		end
+	end
+
+	PageHome.Visible = (tabName == "HOME")
+	PageMain.Visible = (tabName == "MAIN")
+	PageTeleport.Visible = (tabName == "TELEPORT")
+	PageESP.Visible = (tabName == "ESP")
+end
+
+TabHomeBtn.Activated:Connect(function() switchTab("HOME") end)
+TabMainBtn.Activated:Connect(function() switchTab("MAIN") end)
+TabTPBtn.Activated:Connect(function() switchTab("TELEPORT") end)
+TabESPBtn.Activated:Connect(function() switchTab("ESP") end)
+
+-- ====================================================
+-- TAB 1: HOME
+-- ====================================================
+local HomePlayerCard = Instance.new("Frame", PageHome)
+HomePlayerCard.Size = UDim2.fromOffset(300, 75)
+HomePlayerCard.Position = UDim2.fromOffset(0, 8)
+HomePlayerCard.BackgroundColor3 = C.panel
+HomePlayerCard.BorderSizePixel = 0
+corner(HomePlayerCard, 12)
+
+local HomePlayerStroke = Instance.new("UIStroke", HomePlayerCard)
+HomePlayerStroke.Color = Color3.fromRGB(130, 60, 200)
+HomePlayerStroke.Thickness = 1.5
+
+local HomeAvatar = Instance.new("ImageLabel", HomePlayerCard)
+HomeAvatar.Size = UDim2.fromOffset(55, 55)
+HomeAvatar.Position = UDim2.fromOffset(10, 10)
+HomeAvatar.BackgroundTransparency = 1
+HomeAvatar.Image = "rbxthumb://type=AvatarHeadShot&id=" .. LocalPlayer.UserId .. "&w=150&h=150"
+corner(HomeAvatar, 10)
+
+local HomeDispName = Instance.new("TextLabel", HomePlayerCard)
+HomeDispName.Size = UDim2.new(1, -75, 0, 20)
+HomeDispName.Position = UDim2.fromOffset(72, 12)
+HomeDispName.BackgroundTransparency = 1
+HomeDispName.Text = LocalPlayer.DisplayName
+HomeDispName.TextColor3 = C.text
+HomeDispName.Font = Enum.Font.GothamBold
+HomeDispName.TextSize = 13
+HomeDispName.TextXAlignment = Enum.TextXAlignment.Left
+
+HomeDispName:GetPropertyChangedSignal("Text"):Connect(function()
+	local textLength = #HomeDispName.Text
+	if textLength > 20 then
+		HomeDispName.TextSize = 9
+	elseif textLength > 14 then
+		HomeDispName.TextSize = 11
+	else
+		HomeDispName.TextSize = 13
+	end
+end)
+
+local HomeUserName = Instance.new("TextLabel", HomePlayerCard)
+HomeUserName.Size = UDim2.new(1, -75, 0, 16)
+HomeUserName.Position = UDim2.fromOffset(72, 32)
+HomeUserName.BackgroundTransparency = 1
+HomeUserName.Text = "@" .. LocalPlayer.Name
+HomeUserName.TextColor3 = C.muted
+HomeUserName.Font = Enum.Font.Gotham
+HomeUserName.TextSize = 10
+HomeUserName.TextXAlignment = Enum.TextXAlignment.Left
+
+local HomeRoleLabel = Instance.new("TextLabel", HomePlayerCard)
+HomeRoleLabel.Size = UDim2.new(1, -75, 0, 14)
+HomeRoleLabel.Position = UDim2.fromOffset(72, 48)
+HomeRoleLabel.BackgroundTransparency = 1
+HomeRoleLabel.Text = "Premium User"
+HomeRoleLabel.TextColor3 = C.aqua
+HomeRoleLabel.Font = Enum.Font.Gotham
+HomeRoleLabel.TextSize = 9
+HomeRoleLabel.TextXAlignment = Enum.TextXAlignment.Left
+
+local HomeStatusCard = Instance.new("Frame", PageHome)
+HomeStatusCard.Size = UDim2.fromOffset(300, 100)
+HomeStatusCard.Position = UDim2.fromOffset(0, 95)
+HomeStatusCard.BackgroundColor3 = C.panel
+HomeStatusCard.BorderSizePixel = 0
+corner(HomeStatusCard, 12)
+
+local WlText = Instance.new("TextLabel", HomeStatusCard)
+WlText.Size = UDim2.new(1, -20, 0, 20)
+WlText.Position = UDim2.fromOffset(12, 12)
+WlText.BackgroundTransparency = 1
+WlText.Text = "Whitelist Duration: <font color=\"#28CD6E\">Lifetime</font>"
+WlText.RichText = true
+WlText.TextColor3 = C.text
+WlText.Font = Enum.Font.GothamBold
+WlText.TextSize = 11
+WlText.TextXAlignment = Enum.TextXAlignment.Left
+
+local BarBg = Instance.new("Frame", HomeStatusCard)
+BarBg.Size = UDim2.new(1, -24, 0, 10)
+BarBg.Position = UDim2.fromOffset(12, 40)
+BarBg.BackgroundColor3 = C.panel2
+BarBg.BorderSizePixel = 0
+corner(BarBg, 5)
+
+local BarFill = Instance.new("Frame", BarBg)
+BarFill.Size = UDim2.new(1, 0, 1, 0)
+BarFill.BackgroundColor3 = C.green
+BarFill.BorderSizePixel = 0
+corner(BarFill, 5)
+
+local ServerTimeLbl = Instance.new("TextLabel", HomeStatusCard)
+ServerTimeLbl.Size = UDim2.new(1, -24, 0, 20)
+ServerTimeLbl.Position = UDim2.fromOffset(12, 62)
+ServerTimeLbl.BackgroundTransparency = 1
+ServerTimeLbl.Text = "Server Time: 00:00:00"
+ServerTimeLbl.TextColor3 = C.muted
+ServerTimeLbl.Font = Enum.Font.Gotham
+ServerTimeLbl.TextSize = 10
+ServerTimeLbl.TextXAlignment = Enum.TextXAlignment.Left
+
+local FpsCard = Instance.new("Frame", PageHome)
+FpsCard.Size = UDim2.fromOffset(220, 85)
+FpsCard.Position = UDim2.fromOffset(310, 8)
+FpsCard.BackgroundColor3 = C.panel
+FpsCard.BorderSizePixel = 0
+corner(FpsCard, 12)
+
+local FpsStroke = Instance.new("UIStroke", FpsCard)
+FpsStroke.Color = Color3.fromRGB(130, 60, 200)
+FpsStroke.Thickness = 1.5
+
+local FpsTitle = Instance.new("TextLabel", FpsCard)
+FpsTitle.Size = UDim2.new(1, -40, 0, 20)
+FpsTitle.Position = UDim2.fromOffset(12, 10)
+FpsTitle.BackgroundTransparency = 1
+FpsTitle.Text = "FPS"
+FpsTitle.TextColor3 = C.muted
+FpsTitle.Font = Enum.Font.GothamBold
+FpsTitle.TextSize = 11
+FpsTitle.TextXAlignment = Enum.TextXAlignment.Left
+
+local FpsIcon = Instance.new("TextLabel", FpsCard)
+FpsIcon.Size = UDim2.fromOffset(20, 20)
+FpsIcon.Position = UDim2.new(1, -28, 0, 10)
+FpsIcon.BackgroundTransparency = 1
+FpsIcon.Text = "⚡"
+FpsIcon.TextColor3 = C.green
+FpsIcon.Font = Enum.Font.GothamBold
+FpsIcon.TextSize = 13
+
+local FpsValue = Instance.new("TextLabel", FpsCard)
+FpsValue.Size = UDim2.new(1, -24, 0, 40)
+FpsValue.Position = UDim2.fromOffset(12, 35)
+FpsValue.BackgroundTransparency = 1
+FpsValue.Text = "60.00"
+FpsValue.TextColor3 = C.green
+FpsValue.Font = Enum.Font.GothamBold
+FpsValue.TextSize = 24
+FpsValue.TextXAlignment = Enum.TextXAlignment.Left
+
+local PingCard = Instance.new("Frame", PageHome)
+PingCard.Size = UDim2.fromOffset(220, 85)
+PingCard.Position = UDim2.fromOffset(310, 100)
+PingCard.BackgroundColor3 = C.panel
+PingCard.BorderSizePixel = 0
+corner(PingCard, 12)
+
+local PingStroke = Instance.new("UIStroke", PingCard)
+PingStroke.Color = Color3.fromRGB(130, 60, 200)
+PingStroke.Thickness = 1.5
+
+local PingTitle = Instance.new("TextLabel", PingCard)
+PingTitle.Size = UDim2.new(1, -40, 0, 20)
+PingTitle.Position = UDim2.fromOffset(12, 10)
+PingTitle.BackgroundTransparency = 1
+PingTitle.Text = "Network Latency"
+PingTitle.TextColor3 = C.muted
+PingTitle.Font = Enum.Font.GothamBold
+PingTitle.TextSize = 11
+PingTitle.TextXAlignment = Enum.TextXAlignment.Left
+
+local PingIcon = Instance.new("TextLabel", PingCard)
+PingIcon.Size = UDim2.fromOffset(20, 20)
+PingIcon.Position = UDim2.new(1, -28, 0, 10)
+PingIcon.BackgroundTransparency = 1
+PingIcon.Text = "📶"
+PingIcon.TextColor3 = C.aqua
+PingIcon.Font = Enum.Font.GothamBold
+PingIcon.TextSize = 12
+
+local PingValue = Instance.new("TextLabel", PingCard)
+PingValue.Size = UDim2.new(1, -24, 0, 40)
+PingValue.Position = UDim2.fromOffset(12, 35)
+PingValue.BackgroundTransparency = 1
+PingValue.Text = "00.00ms"
+PingValue.TextColor3 = C.red
+PingValue.Font = Enum.Font.GothamBold
+PingValue.TextSize = 22
+PingValue.TextXAlignment = Enum.TextXAlignment.Left
+
+local ServerInfoCard = Instance.new("Frame", PageHome)
+ServerInfoCard.Size = UDim2.fromOffset(530, 180)
+ServerInfoCard.Position = UDim2.fromOffset(0, 200)
+ServerInfoCard.BackgroundColor3 = C.panel
+ServerInfoCard.BorderSizePixel = 0
+corner(ServerInfoCard, 12)
+
+local ServerInfoTitle = Instance.new("TextLabel", ServerInfoCard)
+ServerInfoTitle.Size = UDim2.new(1, -20, 0, 25)
+ServerInfoTitle.Position = UDim2.fromOffset(12, 8)
+ServerInfoTitle.BackgroundTransparency = 1
+ServerInfoTitle.Text = "GAME & SERVER INFORMATION"
+ServerInfoTitle.TextColor3 = C.aqua
+ServerInfoTitle.Font = Enum.Font.GothamBold
+ServerInfoTitle.TextSize = 11
+ServerInfoTitle.TextXAlignment = Enum.TextXAlignment.Left
+
+local ServerInfoList = Instance.new("TextLabel", ServerInfoCard)
+ServerInfoList.Size = UDim2.new(1, -24, 1, -40)
+ServerInfoList.Position = UDim2.fromOffset(12, 32)
+ServerInfoList.BackgroundTransparency = 1
+ServerInfoList.TextColor3 = C.text
+ServerInfoList.Font = Enum.Font.Gotham
+ServerInfoList.TextSize = 11
+ServerInfoList.TextXAlignment = Enum.TextXAlignment.Left
+ServerInfoList.TextYAlignment = Enum.TextYAlignment.Top
+ServerInfoList.LineHeight = 1.4
+
+local frameCount = 0
+local lastFpsUpdate = os.clock()
+
+RunService.RenderStepped:Connect(function()
+	frameCount = frameCount + 1
+	local now = os.clock()
+	if now - lastFpsUpdate >= 0.5 then
+		local fps = math.floor((frameCount / (now - lastFpsUpdate)) * 100) / 100
+		FpsValue.Text = string.format("%.2f", fps)
+		if fps >= 50 then
+			FpsValue.TextColor3 = C.green
+		elseif fps >= 30 then
+			FpsValue.TextColor3 = Color3.fromRGB(240, 180, 50)
+		else
+			FpsValue.TextColor3 = C.red
+		end
+		frameCount = 0
+		lastFpsUpdate = now
+	end
+
+	local ping = 0
+	pcall(function()
+		ping = StatsService.Network.ServerStatsItem["Data Ping"]:GetValue()
+	end)
+	PingValue.Text = string.format("%.2fms", ping)
+	if ping < 100 then
+		PingValue.TextColor3 = C.green
+	elseif ping < 200 then
+		PingValue.TextColor3 = Color3.fromRGB(240, 180, 50)
+	else
+		PingValue.TextColor3 = C.red
+	end
+
+	local sTime = math.floor(workspace.DistributedGameTime)
+	local hrs = math.floor(sTime / 3600)
+	local mins = math.floor((sTime % 3600) / 60)
+	local secs = sTime % 60
+	ServerTimeLbl.Text = string.format("Server Uptime: %02d:%02d:%02d", hrs, mins, secs)
+
+	ServerInfoList.Text = string.format(
+		"• Place ID: %d\n• Job ID: %s\n• Total Players: %d/%d\n• Executor: %s",
+		game.PlaceId,
+		string.sub(game.JobId, 1, 18) .. "...",
+		#Players:GetPlayers(),
+		Players.MaxPlayers,
+		(identifyexecutor and identifyexecutor() or "Unknown")
+	)
+end)
+
+-- ====================================================
+-- TAB 2: MAIN CONTROLS (TẢI DANH SÁCH TÍNH NĂNG MAIN)
+-- ====================================================
+local function createMainToggle(parent, titleText, layoutOrder)
+	local tf = Instance.new("TextButton", parent)
+	tf.Size = UDim2.new(1, -10, 0, 42)
+	tf.BackgroundColor3 = C.panel
+	tf.BorderSizePixel = 0
+	tf.Text = ""
+	tf.AutoButtonColor = false
+	tf.LayoutOrder = layoutOrder or 0
+	corner(tf, 10)
+
+	local lbl = Instance.new("TextLabel", tf)
+	lbl.Size = UDim2.new(1, -70, 1, 0)
+	lbl.Position = UDim2.fromOffset(14, 0)
+	lbl.BackgroundTransparency = 1
+	lbl.Text = titleText
+	lbl.TextColor3 = C.text
+	lbl.Font = Enum.Font.GothamBold
+	lbl.TextSize = 11
+	lbl.TextXAlignment = Enum.TextXAlignment.Left
+
+	local track = Instance.new("Frame", tf)
+	track.Size = UDim2.fromOffset(48, 24)
+	track.Position = UDim2.new(1, -60, 0.5, -12)
+	track.BackgroundColor3 = C.panel2
+	track.BorderSizePixel = 0
+	corner(track, 12)
+
+	local knob = Instance.new("Frame", track)
+	knob.Size = UDim2.fromOffset(18, 18)
+	knob.Position = UDim2.new(0, 3, 0.5, -9)
+	knob.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+	knob.BorderSizePixel = 0
+	corner(knob, 9)
+
+	return tf, track, knob
+end
+
+local function createMainInputRow(parent, placeholder, btnText, layoutOrder)
+	local frame = Instance.new("Frame", parent)
+	frame.Size = UDim2.new(1, -10, 0, 38)
+	frame.BackgroundTransparency = 1
+	frame.LayoutOrder = layoutOrder or 0
+
+	local box = Instance.new("TextBox", frame)
+	box.Size = UDim2.new(1, -155, 1, 0)
+	box.Position = UDim2.fromOffset(0, 0)
+	box.BackgroundColor3 = C.panel
+	box.BorderSizePixel = 0
+	box.PlaceholderText = placeholder
+	box.PlaceholderColor3 = C.muted
+	box.Text = ""
+	box.TextColor3 = C.text
+	box.Font = Enum.Font.Gotham
+	box.TextSize = 11
+	box.TextXAlignment = Enum.TextXAlignment.Left
+	corner(box, 9)
+
+	local boxPad = Instance.new("UIPadding", box)
+	boxPad.PaddingLeft = UDim.new(0, 10)
+
+	local btn = button(frame, btnText, UDim2.fromOffset(145, 38), UDim2.new(1, -145, 0, 0))
+
+	return box, btn
+end
+
+local function animateToggle(knob, track, state)
+	local targetKnobPos = state and UDim2.new(1, -21, 0.5, -9) or UDim2.new(0, 3, 0.5, -9)
+	local targetTrackColor = state and C.green or C.panel2
+	
+	TweenService:Create(knob, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+		Position = targetKnobPos
+	}):Play()
+	
+	TweenService:Create(track, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+		BackgroundColor3 = targetTrackColor
+	}):Play()
+end
+
+-- Tải các điều khiển vào Tab MAIN
+local SpeedBox, ApplySpeedBtn = createMainInputRow(PageMain, "WalkSpeed (Default: 16)...", "SET SPEED", 1)
+local JumpBox, ApplyJumpBtn = createMainInputRow(PageMain, "JumpPower (Default: 50)...", "SET JUMP", 2)
+
+local InfJumpFrame, InfJumpTrack, InfJumpKnob = createMainToggle(PageMain, "INFINITE JUMP", 3)
+local NoClipFrame, NoClipTrack, NoClipKnob = createMainToggle(PageMain, "NOCLIP (WALK THROUGH WALLS)", 4)
+local FlyFrame, FlyTrack, FlyKnob = createMainToggle(PageMain, "FLY MOD", 5)
+local AntiAfkFrame, AntiAfkTrack, AntiAfkKnob = createMainToggle(PageMain, "ANTI AFK", 6)
+local FreezeFrame, FreezeTrack, FreezeKnob = createMainToggle(PageMain, "FREEZE CHARACTER", 7)
+
+local SitBtn = button(PageMain, "SIT CHARACTER", UDim2.new(1, -10, 0, 38), UDim2.fromOffset(0, 0))
+SitBtn.LayoutOrder = 8
+
+ApplySpeedBtn.Activated:Connect(function()
+	local num = tonumber(SpeedBox.Text)
+	if num then
+		walkSpeedValue = num
+		local char = LocalPlayer.Character
+		local h = char and char:FindFirstChildOfClass("Humanoid")
+		if h then
+			h.WalkSpeed = walkSpeedValue
+			notify("WalkSpeed set to " .. tostring(num), true)
+		end
+	else
+		notify("Invalid speed value!", false)
+	end
+end)
+
+ApplyJumpBtn.Activated:Connect(function()
+	local num = tonumber(JumpBox.Text)
+	if num then
+		jumpPowerValue = num
+		local char = LocalPlayer.Character
+		local h = char and char:FindFirstChildOfClass("Humanoid")
+		if h then
+			h.UseJumpPower = true
+			h.JumpPower = jumpPowerValue
+			notify("JumpPower set to " .. tostring(num), true)
+		end
+	else
+		notify("Invalid jump value!", false)
+	end
+end)
+
+InfJumpFrame.Activated:Connect(function()
+	infJumpEnabled = not infJumpEnabled
+	animateToggle(InfJumpKnob, InfJumpTrack, infJumpEnabled)
+	notify("Infinite Jump: " .. (infJumpEnabled and "ENABLED" or "DISABLED"), infJumpEnabled)
+end)
+
+NoClipFrame.Activated:Connect(function()
+	noClipEnabled = not noClipEnabled
+	animateToggle(NoClipKnob, NoClipTrack, noClipEnabled)
+	notify("NoClip: " .. (noClipEnabled and "ENABLED" or "DISABLED"), noClipEnabled)
+end)
+
+FlyFrame.Activated:Connect(function()
+	flyEnabled = not flyEnabled
+	animateToggle(FlyKnob, FlyTrack, flyEnabled)
+	toggleFly(flyEnabled)
+	notify("Fly: " .. (flyEnabled and "ENABLED" or "DISABLED"), flyEnabled)
+end)
+
+AntiAfkFrame.Activated:Connect(function()
+	antiAfkEnabled = not antiAfkEnabled
+	animateToggle(AntiAfkKnob, AntiAfkTrack, antiAfkEnabled)
+	toggleAntiAfk(antiAfkEnabled)
+	notify("Anti AFK: " .. (antiAfkEnabled and "ENABLED" or "DISABLED"), antiAfkEnabled)
+end)
+
+FreezeFrame.Activated:Connect(function()
+	freezeEnabled = not freezeEnabled
+	animateToggle(FreezeKnob, FreezeTrack, freezeEnabled)
+	toggleFreeze(freezeEnabled)
+	notify("Freeze Character: " .. (freezeEnabled and "ENABLED" or "DISABLED"), freezeEnabled)
+end)
+
+SitBtn.Activated:Connect(function()
+	doSit()
+	notify("Character Sitting", true)
+end)
+
+-- ====================================================
+-- TAB 3: TELEPORT CONTROLS
+-- ====================================================
+local SearchBox = Instance.new("TextBox", PageTeleport)
+SearchBox.Size = UDim2.fromOffset(200, 34)
+SearchBox.Position = UDim2.fromOffset(0, 8)
+SearchBox.BackgroundColor3 = C.panel
+SearchBox.BorderSizePixel = 0
+SearchBox.PlaceholderText = "Search player..."
+SearchBox.PlaceholderColor3 = C.muted
+SearchBox.Text = ""
+SearchBox.TextColor3 = C.text
+SearchBox.Font = Enum.Font.Gotham
+SearchBox.TextSize = 11
+SearchBox.TextXAlignment = Enum.TextXAlignment.Left
+corner(SearchBox, 8)
+
+local SearchPadding = Instance.new("UIPadding", SearchBox)
+SearchPadding.PaddingLeft = UDim.new(0, 10)
+
+local ResetBtn = button(PageTeleport, "", UDim2.fromOffset(36, 34), UDim2.fromOffset(206, 8))
+local ResetIcon = Instance.new("ImageLabel", ResetBtn)
+ResetIcon.Size = UDim2.fromOffset(18, 18)
+ResetIcon.Position = UDim2.fromScale(0.5, 0.5)
+ResetIcon.AnchorPoint = Vector2.new(0.5, 0.5)
+ResetIcon.BackgroundTransparency = 1
+ResetIcon.Image = getImageAsset(IconConfig.ResetIcon)
+ResetIcon.ImageColor3 = C.text
+
+local List = Instance.new("ScrollingFrame", PageTeleport)
+List.Size = UDim2.fromOffset(242, 335)
+List.Position = UDim2.fromOffset(0, 50)
+List.BackgroundColor3 = C.panel
+List.BorderSizePixel = 0
+List.ScrollBarThickness = 4
+List.ScrollBarImageColor3 = C.aqua
+List.CanvasSize = UDim2.new(0, 0, 0, 0)
+List.AutomaticCanvasSize = Enum.AutomaticSize.Y
+corner(List, 12)
+
+local Layout = Instance.new("UIListLayout", List)
+Layout.Padding = UDim.new(0, 6)
+Layout.SortOrder = Enum.SortOrder.Name
+
+local Pad = Instance.new("UIPadding", List)
+Pad.PaddingTop = UDim.new(0, 8); Pad.PaddingBottom = UDim.new(0, 8)
+Pad.PaddingLeft = UDim.new(0, 8); Pad.PaddingRight = UDim.new(0, 8)
+
+local Selected = Instance.new("TextLabel", PageTeleport)
+Selected.Size = UDim2.fromOffset(280, 20)
+Selected.Position = UDim2.fromOffset(258, 8)
+Selected.BackgroundTransparency = 1
+Selected.Text = "Selected: None"
+Selected.TextColor3 = C.text
+Selected.Font = Enum.Font.GothamBold
+Selected.TextSize = 12
+Selected.TextXAlignment = Enum.TextXAlignment.Left
+
+local TP = button(PageTeleport, "TP TO PLAYER", UDim2.fromOffset(280, 42), UDim2.fromOffset(258, 35))
+local Spec = button(PageTeleport, "SPECTATE", UDim2.fromOffset(135, 42), UDim2.fromOffset(258, 84))
+local UnSpec = button(PageTeleport, "UNSPECTATE", UDim2.fromOffset(135, 42), UDim2.fromOffset(403, 84))
+
+local CoordTitle = Instance.new("TextLabel", PageTeleport)
+CoordTitle.Size = UDim2.fromOffset(280, 20)
+CoordTitle.Position = UDim2.fromOffset(258, 145)
+CoordTitle.BackgroundTransparency = 1
+CoordTitle.Text = "SAVED COORDINATE"
+CoordTitle.TextColor3 = C.aqua
+CoordTitle.Font = Enum.Font.GothamBold
+CoordTitle.TextSize = 11
+CoordTitle.TextXAlignment = Enum.TextXAlignment.Left
+
+local Coord = Instance.new("TextLabel", PageTeleport)
+Coord.Size = UDim2.fromOffset(280, 32)
+Coord.Position = UDim2.fromOffset(258, 168)
+Coord.BackgroundColor3 = C.panel
+Coord.BorderSizePixel = 0
+Coord.Text = "X: --   Y: --   Z: --"
+Coord.TextColor3 = C.muted
+Coord.Font = Enum.Font.Gotham
+Coord.TextSize = 10
+corner(Coord, 9)
+
+local Save = button(PageTeleport, "SAVE POSITION", UDim2.fromOffset(135, 40), UDim2.fromOffset(258, 208))
+local TPSaved = button(PageTeleport, "TP SAVED", UDim2.fromOffset(135, 40), UDim2.fromOffset(403, 208))
+
+local ToggleFrame = Instance.new("TextButton", PageTeleport)
+ToggleFrame.Size = UDim2.fromOffset(280, 38)
+ToggleFrame.Position = UDim2.fromOffset(258, 258)
+ToggleFrame.BackgroundColor3 = C.panel
+ToggleFrame.BorderSizePixel = 0
+ToggleFrame.Text = ""
+ToggleFrame.AutoButtonColor = false
+corner(ToggleFrame, 9)
+
+local ToggleLabel = Instance.new("TextLabel", ToggleFrame)
+ToggleLabel.Size = UDim2.new(1, -60, 1, 0)
+ToggleLabel.Position = UDim2.fromOffset(10, 0)
+ToggleLabel.BackgroundTransparency = 1
+ToggleLabel.Text = "QUICK TP SAVED BUTTON"
+ToggleLabel.TextColor3 = C.text
+ToggleLabel.Font = Enum.Font.GothamBold
+ToggleLabel.TextSize = 10
+ToggleLabel.TextXAlignment = Enum.TextXAlignment.Left
+
+local ToggleTrack = Instance.new("Frame", ToggleFrame)
+ToggleTrack.Size = UDim2.fromOffset(44, 22)
+ToggleTrack.Position = UDim2.new(1, -52, 0.5, -11)
+ToggleTrack.BackgroundColor3 = C.panel2
+ToggleTrack.BorderSizePixel = 0
+corner(ToggleTrack, 11)
+
+local ToggleKnob = Instance.new("Frame", ToggleTrack)
+ToggleKnob.Size = UDim2.fromOffset(16, 16)
+ToggleKnob.Position = UDim2.new(0, 3, 0.5, -8)
+ToggleKnob.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+ToggleKnob.BorderSizePixel = 0
+corner(ToggleKnob, 8)
+
+local ToggleRandomFrame = Instance.new("TextButton", PageTeleport)
+ToggleRandomFrame.Size = UDim2.fromOffset(280, 38)
+ToggleRandomFrame.Position = UDim2.fromOffset(258, 302)
+ToggleRandomFrame.BackgroundColor3 = C.panel
+ToggleRandomFrame.BorderSizePixel = 0
+ToggleRandomFrame.Text = ""
+ToggleRandomFrame.AutoButtonColor = false
+corner(ToggleRandomFrame, 9)
+
+local ToggleRandomLabel = Instance.new("TextLabel", ToggleRandomFrame)
+ToggleRandomLabel.Size = UDim2.new(1, -60, 1, 0)
+ToggleRandomLabel.Position = UDim2.fromOffset(10, 0)
+ToggleRandomLabel.BackgroundTransparency = 1
+ToggleRandomLabel.Text = "QUICK RANDOM TP BUTTON"
+ToggleRandomLabel.TextColor3 = C.text
+ToggleRandomLabel.Font = Enum.Font.GothamBold
+ToggleRandomLabel.TextSize = 10
+ToggleRandomLabel.TextXAlignment = Enum.TextXAlignment.Left
+
+local ToggleRandomTrack = Instance.new("Frame", ToggleRandomFrame)
+ToggleRandomTrack.Size = UDim2.fromOffset(44, 22)
+ToggleRandomTrack.Position = UDim2.new(1, -52, 0.5, -11)
+ToggleRandomTrack.BackgroundColor3 = C.panel2
+ToggleRandomTrack.BorderSizePixel = 0
+corner(ToggleRandomTrack, 11)
+
+local ToggleRandomKnob = Instance.new("Frame", ToggleRandomTrack)
+ToggleRandomKnob.Size = UDim2.fromOffset(16, 16)
+ToggleRandomKnob.Position = UDim2.new(0, 3, 0.5, -8)
+ToggleRandomKnob.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+ToggleRandomKnob.BorderSizePixel = 0
+corner(ToggleRandomKnob, 8)
+
+-- ====================================================
+-- TAB 4: ESP CONTROLS
+-- ====================================================
+local function createESPToggle(parent, titleText, posY)
+	local tf = Instance.new("TextButton", parent)
+	tf.Size = UDim2.fromOffset(530, 42)
+	tf.Position = UDim2.fromOffset(0, posY)
+	tf.BackgroundColor3 = C.panel
+	tf.BorderSizePixel = 0
+	tf.Text = ""
+	tf.AutoButtonColor = false
+	corner(tf, 10)
+
+	local lbl = Instance.new("TextLabel", tf)
+	lbl.Size = UDim2.new(1, -70, 1, 0)
+	lbl.Position = UDim2.fromOffset(14, 0)
+	lbl.BackgroundTransparency = 1
+	lbl.Text = titleText
+	lbl.TextColor3 = C.text
+	lbl.Font = Enum.Font.GothamBold
+	lbl.TextSize = 11
+	lbl.TextXAlignment = Enum.TextXAlignment.Left
+
+	local track = Instance.new("Frame", tf)
+	track.Size = UDim2.fromOffset(48, 24)
+	track.Position = UDim2.new(1, -60, 0.5, -12)
+	track.BackgroundColor3 = C.panel2
+	track.BorderSizePixel = 0
+	corner(track, 12)
+
+	local knob = Instance.new("Frame", track)
+	knob.Size = UDim2.fromOffset(18, 18)
+	knob.Position = UDim2.new(0, 3, 0.5, -9)
+	knob.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+	knob.BorderSizePixel = 0
+	corner(knob, 9)
+
+	return tf, track, knob
+end
+
+local EspHLFrame, EspHLTrack, EspHLKnob = createESPToggle(PageESP, "PLAYER HIGHLIGHT (CHAMS)", 8)
+local EspNameFrame, EspNameTrack, EspNameKnob = createESPToggle(PageESP, "NAME & DISTANCE ESP", 58)
+local EspTeamFrame, EspTeamTrack, EspTeamKnob = createESPToggle(PageESP, "TEAM CHECK (HIDE TEAMMATES)", 108)
+
+-- FLOATING BUTTONS
+local Bubble = Instance.new("ImageButton", Gui)
+Bubble.Size = UDim2.fromOffset(56, 56)
+Bubble.Position = UDim2.new(0, 18, .5, -28)
+Bubble.BackgroundColor3 = C.dark
+Bubble.BorderSizePixel = 0
+Bubble.AutoButtonColor = false
+Bubble.Active = true
+Bubble.Visible = false
+corner(Bubble, 28)
+
+local BubbleStroke = Instance.new("UIStroke", Bubble)
+BubbleStroke.Color = C.aqua
+BubbleStroke.Thickness = 2
+Bubble.Image = getImageAsset(IconConfig.BubbleIcon)
+
+local QuickTPBtn = Instance.new("TextButton", Gui)
+QuickTPBtn.Size = UDim2.fromOffset(110, 36)
+QuickTPBtn.Position = UDim2.new(0, 18, .5, 40)
+QuickTPBtn.BackgroundColor3 = C.bg
+QuickTPBtn.BackgroundTransparency = 0.15
+QuickTPBtn.BorderSizePixel = 0
+QuickTPBtn.Text = "TP SAVED"
+QuickTPBtn.TextColor3 = C.text
+QuickTPBtn.Font = Enum.Font.GothamBold
+QuickTPBtn.TextSize = 11
+QuickTPBtn.AutoButtonColor = false
+QuickTPBtn.Active = true
+QuickTPBtn.Visible = false
+corner(QuickTPBtn, 12)
+
+local QuickTPStroke = Instance.new("UIStroke", QuickTPBtn)
+QuickTPStroke.Color = C.aqua
+QuickTPStroke.Thickness = 2
+QuickTPStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+
+local QuickRandomTPBtn = Instance.new("TextButton", Gui)
+QuickRandomTPBtn.Size = UDim2.fromOffset(110, 36)
+QuickRandomTPBtn.Position = UDim2.new(0, 18, .5, 84)
+QuickRandomTPBtn.BackgroundColor3 = C.bg
+QuickRandomTPBtn.BackgroundTransparency = 0.15
+QuickRandomTPBtn.BorderSizePixel = 0
+QuickRandomTPBtn.Text = "RANDOM TP"
+QuickRandomTPBtn.TextColor3 = C.text
+QuickRandomTPBtn.Font = Enum.Font.GothamBold
+QuickRandomTPBtn.TextSize = 11
+QuickRandomTPBtn.AutoButtonColor = false
+QuickRandomTPBtn.Active = true
+QuickRandomTPBtn.Visible = false
+corner(QuickRandomTPBtn, 12)
+
+local QuickRandomTPStroke = Instance.new("UIStroke", QuickRandomTPBtn)
+QuickRandomTPStroke.Color = C.aqua
+QuickRandomTPStroke.Thickness = 2
+QuickRandomTPStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+
+local WorldHighlight = Instance.new("Highlight")
+WorldHighlight.Name = "Aqua3DPlayerHighlight"
+WorldHighlight.FillColor = C.aqua
+WorldHighlight.OutlineColor = Color3.fromRGB(255, 255, 255)
+WorldHighlight.FillTransparency = 0.4
+WorldHighlight.OutlineTransparency = 0
+WorldHighlight.Enabled = false
+WorldHighlight.Parent = Gui
+
+local selected, savedCF, savedPos, spectating = nil, nil, nil, false
+local activeHolding = false
+local currentHoveredPlayer = nil
+local holdTimerThread = nil
+local holdDragInput = nil
+local startTouchPos = nil
+local pendingPlayer = nil
+local isScrolling = false
+local quickTPEnabled = false
+local quickRandomTPEnabled = false
+
+local espHighlightEnabled = false
+local espNamesEnabled = false
+local espTeamCheck = false
+
+local function root(char)
+	return char and char:FindFirstChild("HumanoidRootPart")
+end
+
+local function updateSelected()
+	Selected.Text = "Selected: " .. (selected and selected.DisplayName or "None")
+end
+
+local function cancelHoldTimer()
+	if holdTimerThread then
+		task.cancel(holdTimerThread)
+		holdTimerThread = nil
+	end
+end
+
+local function updateListHighlights()
+	local selectedUserId = selected and selected.UserId or nil
+	for _, item in ipairs(List:GetChildren()) do
+		if item:IsA("TextButton") then
+			local itemUserId = item:GetAttribute("TargetUserId")
+			local isSelected = (itemUserId ~= nil and itemUserId == selectedUserId)
+			
+			local btnStroke = item:FindFirstChildOfClass("UIStroke")
+			if isSelected then
+				item.BackgroundColor3 = C.dark
+				if btnStroke then
+					btnStroke.Thickness = 2
+					btnStroke.Transparency = 0
+					btnStroke.Color = C.aqua
+				end
+			else
+				item.BackgroundColor3 = C.panel2
+				if btnStroke then
+					btnStroke.Thickness = 0
+					btnStroke.Transparency = 1
+				end
+			end
+		end
+	end
+end
+
+local function selectPlayerDirectly(plr)
+	selected = plr
+	updateSelected()
+	updateListHighlights()
+end
+
+local function clear3DHighlight()
+	cancelHoldTimer()
+	WorldHighlight.Enabled = false
+	WorldHighlight.Adornee = nil
+	PreviewFrame.Visible = false
+	currentHoveredPlayer = nil
+	holdDragInput = nil
+	updateListHighlights()
+end
+
+local function updatePreviewPosition(mousePos)
+	local s = Scale.Scale or 1
+	local posX = (mousePos.X / s) + 15
+	local posY = (mousePos.Y / s) + 15
+	
+	local viewport = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or Vector2.new(800, 600)
+	if posX + PreviewFrame.Size.X.Offset > (viewport.X / s) then
+		posX = (mousePos.X / s) - PreviewFrame.Size.X.Offset - 15
+	end
+	if posY + PreviewFrame.Size.Y.Offset > (viewport.Y / s) then
+		posY = (mousePos.Y / s) - PreviewFrame.Size.Y.Offset - 15
+	end
+
+	PreviewFrame.Position = UDim2.fromOffset(posX, posY)
+end
+
+local function showPlayerPreview(plr, btn)
+	selectPlayerDirectly(plr)
+	currentHoveredPlayer = plr
+
+	SkinImage.Image = "rbxthumb://type=Avatar&id=" .. plr.UserId .. "&w=420&h=420"
+	InfoName.Text = plr.DisplayName
+	InfoUser.Text = "@" .. plr.Name
+	
+	local r = root(plr.Character)
+	if r then
+		local pos = r.Position
+		InfoPos.Text = string.format("X:%.1f Y:%.1f Z:%.1f", pos.X, pos.Y, pos.Z)
+		WorldHighlight.Adornee = plr.Character
+		WorldHighlight.Enabled = true
+	else
+		InfoPos.Text = "Pos: Out of range"
+		WorldHighlight.Enabled = false
+		notify("Target character out of render range", false)
+	end
+	
+	PreviewFrame.Visible = true
+end
+
+local function getPlayerBtnAtPosition(pos2D)
+	for _, item in ipairs(List:GetChildren()) do
+		if item:IsA("TextButton") and item:GetAttribute("TargetUserId") then
+			local absPos = item.AbsolutePosition
+			local absSize = item.AbsoluteSize
+			if pos2D.X >= absPos.X and pos2D.X <= absPos.X + absSize.X and
+			   pos2D.Y >= absPos.Y and pos2D.Y <= absPos.Y + absSize.Y then
+				local uid = item:GetAttribute("TargetUserId")
+				for _, p in ipairs(Players:GetPlayers()) do
+					if p.UserId == uid then
+						return item, p
+					end
+				end
+			end
+		end
+	end
+	return nil, nil
+end
+
+local function refresh()
+	clear3DHighlight()
+	
+	for _,v in ipairs(List:GetChildren()) do
+		if v:IsA("TextButton") then v:Destroy() end
+	end
+	
+	local filter = string.lower(SearchBox.Text)
+
+	for _,plr in ipairs(Players:GetPlayers()) do
+		if plr ~= LocalPlayer then
+			local dName = string.lower(plr.DisplayName)
+			local uName = string.lower(plr.Name)
+			
+			if filter == "" or string.find(dName, filter, 1, true) or string.find(uName, filter, 1, true) then
+				local isSel = selected and plr.UserId == selected.UserId
+				local b = Instance.new("TextButton", List)
+				b.Size = UDim2.new(1, -2, 0, 42)
+				b.BackgroundColor3 = isSel and C.dark or C.panel2
+				b.BorderSizePixel = 0
+				b.Text = ""
+				b.AutoButtonColor = false
+				b.Active = true
+				b:SetAttribute("TargetUserId", plr.UserId)
+				corner(b, 8)
+
+				local btnStroke = Instance.new("UIStroke", b)
+				btnStroke.Color = C.aqua
+				btnStroke.Thickness = isSel and 2 or 0
+				btnStroke.Transparency = isSel and 0 or 1
+				
+				local avatar = Instance.new("ImageLabel", b)
+				avatar.Size = UDim2.fromOffset(30, 30)
+				avatar.Position = UDim2.fromOffset(6, 6)
+				avatar.BackgroundTransparency = 1
+				avatar.Image = "rbxthumb://type=AvatarHeadShot&id=" .. plr.UserId .. "&w=150&h=150"
+				corner(avatar, 15)
+				
+				local nameLbl = Instance.new("TextLabel", b)
+				nameLbl.Size = UDim2.new(1, -48, 1, 0)
+				nameLbl.Position = UDim2.fromOffset(44, 0)
+				nameLbl.BackgroundTransparency = 1
+				nameLbl.Text = plr.DisplayName
+				nameLbl.TextColor3 = C.text
+				nameLbl.Font = Enum.Font.GothamBold
+				nameLbl.TextSize = 11
+				nameLbl.TextXAlignment = Enum.TextXAlignment.Left
+
+				b.MouseEnter:Connect(function()
+					if UserInputService.TouchEnabled then return end
+					if not selected or selected.UserId ~= plr.UserId then
+						TweenService:Create(b, TweenInfo.new(0.15), {BackgroundColor3 = C.hover}):Play()
+					end
+				end)
+				b.MouseLeave:Connect(function()
+					if UserInputService.TouchEnabled then return end
+					if not selected or selected.UserId ~= plr.UserId then
+						TweenService:Create(b, TweenInfo.new(0.15), {BackgroundColor3 = C.panel2}):Play()
+					end
+				end)
+
+				b.Activated:Connect(function()
+					cancelHoldTimer()
+					if not activeHolding then
+						selectPlayerDirectly(plr)
+					end
+				end)
+
+				b.InputBegan:Connect(function(input)
+					if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+						cancelHoldTimer()
+						holdDragInput = input
+						startTouchPos = input.Position
+						pendingPlayer = plr
+						isScrolling = false
+
+						holdTimerThread = task.delay(0.25, function()
+							if not isScrolling then
+								activeHolding = true
+								updatePreviewPosition(input.Position)
+								showPlayerPreview(pendingPlayer, b)
+							end
+						end)
+					end
+				end)
+			end
+		end
+	end
+	
+	List.CanvasSize = UDim2.new(0, 0, 0, 0)
+end
+
+UserInputService.InputChanged:Connect(function(input)
+	if holdDragInput and input == holdDragInput then
+		if startTouchPos then
+			local dist = (input.Position - startTouchPos).Magnitude
+			if dist > 12 then
+				isScrolling = true
+				cancelHoldTimer()
+				if activeHolding then
+					activeHolding = false
+					clear3DHighlight()
+				end
+			end
+		end
+
+		if activeHolding then
+			updatePreviewPosition(input.Position)
+			local btn, plrTarget = getPlayerBtnAtPosition(input.Position)
+			if plrTarget and btn then
+				showPlayerPreview(plrTarget, btn)
+			end
+		end
+	end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+	if holdDragInput and input == holdDragInput then
+		cancelHoldTimer()
+		if activeHolding then
+			activeHolding = false
+			clear3DHighlight()
+		end
+		startTouchPos = nil
+		pendingPlayer = nil
+		holdDragInput = nil
+	end
+end)
+
+SearchBox:GetPropertyChangedSignal("Text"):Connect(refresh)
+
+ResetBtn.Activated:Connect(function()
+	SearchBox.Text = ""
+	selected = nil
+	updateSelected()
+	refresh()
+end)
+
+Save.Activated:Connect(function()
+	local r = root(LocalPlayer.Character)
+	if not r then notify("Character not ready", false); return end
+	savedCF = r.CFrame; savedPos = r.Position
+	Coord.Text = string.format("X: %.1f   Y: %.1f   Z: %.1f", savedPos.X, savedPos.Y, savedPos.Z)
+	notify("Position saved successfully!", true)
+end)
+
+local function executeTPSaved()
+	local r = root(LocalPlayer.Character)
+	if r and savedPos then
+		r.CFrame = CFrame.new(savedPos)
+		notify("Teleported to saved position", true)
+	else
+		notify("No saved position found!", false)
+	end
+end
+
+local function executeRandomTP()
+	local availablePlayers = {}
+	for _, p in ipairs(Players:GetPlayers()) do
+		if p ~= LocalPlayer and p.Character and root(p.Character) then
+			table.insert(availablePlayers, p)
+		end
+	end
+	
+	if #availablePlayers == 0 then
+		notify("No available players found", false)
+		return
+	end
+	
+	local target = availablePlayers[math.random(1, #availablePlayers)]
+	local r = root(LocalPlayer.Character)
+	local tr = root(target.Character)
+	
+	if r and tr then
+		savedCF = r.CFrame
+		savedPos = r.Position
+		r.CFrame = tr.CFrame + Vector3.new(0, 3, 0)
+		selectPlayerDirectly(target)
+		notify("Random TP to " .. target.DisplayName, true)
+	else
+		notify("Target lost", false)
+	end
+end
+
+TPSaved.Activated:Connect(executeTPSaved)
+
+ToggleFrame.Activated:Connect(function()
+	quickTPEnabled = not quickTPEnabled
+	animateToggle(ToggleKnob, ToggleTrack, quickTPEnabled)
+	QuickTPBtn.Visible = quickTPEnabled
+	notify("Quick TP Saved: " .. (quickTPEnabled and "ENABLED" or "DISABLED"), quickTPEnabled)
+end)
+
+ToggleRandomFrame.Activated:Connect(function()
+	quickRandomTPEnabled = not quickRandomTPEnabled
+	animateToggle(ToggleRandomKnob, ToggleRandomTrack, quickRandomTPEnabled)
+	QuickRandomTPBtn.Visible = quickRandomTPEnabled
+	notify("Quick Random TP: " .. (quickRandomTPEnabled and "DISABLED" or "ENABLED"), quickRandomTPEnabled)
+end)
+
+EspHLFrame.Activated:Connect(function()
+	espHighlightEnabled = not espHighlightEnabled
+	animateToggle(EspHLKnob, EspHLTrack, espHighlightEnabled)
+	notify("Player Highlight: " .. (espHighlightEnabled and "ENABLED" or "DISABLED"), espHighlightEnabled)
+end)
+
+EspNameFrame.Activated:Connect(function()
+	espNamesEnabled = not espNamesEnabled
+	animateToggle(EspNameKnob, EspNameTrack, espNamesEnabled)
+	notify("Name & Distance ESP: " .. (espNamesEnabled and "ENABLED" or "DISABLED"), espNamesEnabled)
+end)
+
+EspTeamFrame.Activated:Connect(function()
+	espTeamCheck = not espTeamCheck
+	animateToggle(EspTeamKnob, EspTeamTrack, espTeamCheck)
+	notify("Team Check: " .. (espTeamCheck and "ENABLED" or "DISABLED"), espTeamCheck)
+end)
+
+-- ENGINE ESP
+local function applyESPToPlayer(plr)
+	if plr == LocalPlayer then return end
+
+	local function setupChar(char)
+		if not char then return end
+		local head = char:WaitForChild("Head", 3)
+		if not head then return end
+
+		local hl = char:FindFirstChild("AquaESP_HL") or Instance.new("Highlight")
+		hl.Name = "AquaESP_HL"
+		hl.FillColor = C.aqua
+		hl.OutlineColor = Color3.fromRGB(255, 255, 255)
+		hl.FillTransparency = 0.5
+		hl.OutlineTransparency = 0
+		hl.Parent = char
+
+		local bb = head:FindFirstChild("AquaESP_Tag") or Instance.new("BillboardGui")
+		bb.Name = "AquaESP_Tag"
+		bb.Size = UDim2.fromOffset(150, 30)
+		bb.StudsOffset = Vector3.new(0, 2.5, 0)
+		bb.AlwaysOnTop = true
+		bb.Parent = head
+
+		local tagLbl = bb:FindFirstChild("TagLbl") or Instance.new("TextLabel", bb)
+		tagLbl.Name = "TagLbl"
+		tagLbl.Size = UDim2.fromScale(1, 1)
+		tagLbl.BackgroundTransparency = 1
+		tagLbl.TextColor3 = C.text
+		tagLbl.Font = Enum.Font.GothamBold
+		tagLbl.TextSize = 11
+		tagLbl.TextStrokeTransparency = 0.2
+	end
+
+	plr.CharacterAdded:Connect(setupChar)
+	if plr.Character then setupChar(plr.Character) end
+end
+
+for _, p in ipairs(Players:GetPlayers()) do applyESPToPlayer(p) end
+Players.PlayerAdded:Connect(applyESPToPlayer)
+
+RunService.RenderStepped:Connect(function()
+	local localChar = LocalPlayer.Character
+	local localRoot = root(localChar)
+
+	for _, plr in ipairs(Players:GetPlayers()) do
+		if plr ~= LocalPlayer and plr.Character then
+			local char = plr.Character
+			local isTeammate = (espTeamCheck and LocalPlayer.Team and plr.Team == LocalPlayer.Team)
+
+			local hl = char:FindFirstChild("AquaESP_HL")
+			if hl then
+				hl.Enabled = espHighlightEnabled and not isTeammate
+			end
+
+			local head = char:FindFirstChild("Head")
+			local bb = head and head:FindFirstChild("AquaESP_Tag")
+			if bb then
+				bb.Enabled = espNamesEnabled and not isTeammate
+				if bb.Enabled and localRoot then
+					local targetRoot = root(char)
+					if targetRoot then
+						local dist = math.floor((localRoot.Position - targetRoot.Position).Magnitude)
+						local tagLbl = bb:FindFirstChild("TagLbl")
+						if tagLbl then
+							tagLbl.Text = string.format("%s\n[%d m]", plr.DisplayName, dist)
+						end
+					end
+				end
+			end
+		end
+	end
+end)
+
+TP.Activated:Connect(function()
+	if not selected or selected == LocalPlayer then notify("Select a player first!", false); return end
+	local r = root(LocalPlayer.Character)
+	local tr = root(selected.Character)
+	if not r or not tr then notify("Target character not ready", false); return end
+	savedCF = r.CFrame; savedPos = r.Position
+	r.CFrame = tr.CFrame + Vector3.new(0, 3, 0)
+	notify("Teleported to " .. selected.DisplayName, true)
+end)
+
+Spec.Activated:Connect(function()
+	if not selected then notify("Select a player first!", false); return end
+	local h = selected.Character and selected.Character:FindFirstChildOfClass("Humanoid")
+	if h and workspace.CurrentCamera then
+		workspace.CurrentCamera.CameraSubject = h
+		spectating = true
+		notify("Spectating " .. selected.DisplayName, true)
+	else notify("Target character not ready", false) end
+end)
+
+UnSpec.Activated:Connect(function()
+	local h = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+	if h and workspace.CurrentCamera then workspace.CurrentCamera.CameraSubject = h end
+	spectating = false
+	notify("Camera reset to local player", true)
+end)
+
+Players.PlayerAdded:Connect(function() task.wait(.2); refresh() end)
+Players.PlayerRemoving:Connect(function(p)
+	if selected == p then selected = nil; updateSelected() end
+	if WorldHighlight.Adornee == p.Character then clear3DHighlight() end
+	task.wait(.1); refresh()
+end)
+
+Min.Activated:Connect(function() Main.Visible = false; Bubble.Visible = true end)
+Close.Activated:Connect(function()
+	if spectating then
+		local h = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+		if h and workspace.CurrentCamera then workspace.CurrentCamera.CameraSubject = h end
+	end
+	clear3DHighlight()
+	Gui:Destroy()
+	NotifGui:Destroy()
+end)
+
+-- LOGIC DRAG NÚT BONG BÓNG
+local bubbleDragInput = nil
+local bubbleDragStart, bubbleStartPos
+local hasDraggedBubble = false
+
+Bubble.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		bubbleDragInput = input
+		hasDraggedBubble = false
+		bubbleDragStart = input.Position
+		bubbleStartPos = Bubble.Position
+		
+		local conn; conn = input:GetPropertyChangedSignal("UserInputState"):Connect(function()
+			if input.UserInputState == Enum.UserInputState.End then
+				bubbleDragInput = nil
+				conn:Disconnect()
+			end
+		end)
+	end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+	if bubbleDragInput and input == bubbleDragInput then
+		local delta = input.Position - bubbleDragStart
+		if delta.Magnitude > 6 then
+			hasDraggedBubble = true
+		end
+		
+		local scaleFactor = Scale.Scale or 1
+		local targetPos = UDim2.new(
+			bubbleStartPos.X.Scale,
+			bubbleStartPos.X.Offset + (delta.X / scaleFactor),
+			bubbleStartPos.Y.Scale,
+			bubbleStartPos.Y.Offset + (delta.Y / scaleFactor)
+		)
+		
+		TweenService:Create(Bubble, TweenInfo.new(0.06, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+			Position = targetPos
+		}):Play()
+	end
+end)
+
+Bubble.Activated:Connect(function()
+	if not hasDraggedBubble then
+		Bubble.Visible = false
+		Main.Visible = true
+	end
+end)
+
+-- LOGIC DRAG QUICK TP
+local qtpDragInput = nil
+local qtpDragStart, qtpStartPos
+local qtpHasDragged = false
+
+QuickTPBtn.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		qtpDragInput = input
+		qtpHasDragged = false
+		qtpDragStart = input.Position
+		qtpStartPos = QuickTPBtn.Position
+		
+		local conn; conn = input:GetPropertyChangedSignal("UserInputState"):Connect(function()
+			if input.UserInputState == Enum.UserInputState.End then
+				qtpDragInput = nil
+				conn:Disconnect()
+			end
+		end)
+	end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+	if qtpDragInput and input == qtpDragInput then
+		local delta = input.Position - qtpDragStart
+		if delta.Magnitude > 6 then
+			qtpHasDragged = true
+		end
+		
+		local scaleFactor = Scale.Scale or 1
+		local targetPos = UDim2.new(
+			qtpStartPos.X.Scale,
+			qtpStartPos.X.Offset + (delta.X / scaleFactor),
+			qtpStartPos.Y.Scale,
+			qtpStartPos.Y.Offset + (delta.Y / scaleFactor)
+		)
+		
+		TweenService:Create(QuickTPBtn, TweenInfo.new(0.06, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+			Position = targetPos
+		}):Play()
+	end
+end)
+
+QuickTPBtn.Activated:Connect(function()
+	if not qtpHasDragged then
+		executeTPSaved()
+	end
+end)
+
+-- LOGIC DRAG QUICK RANDOM TP
+local qrtpDragInput = nil
+local qrtpDragStart, qrtpStartPos
+local qrtpHasDragged = false
+
+QuickRandomTPBtn.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		qrtpDragInput = input
+		qrtpHasDragged = false
+		qrtpDragStart = input.Position
+		qrtpStartPos = QuickRandomTPBtn.Position
+		
+		local conn; conn = input:GetPropertyChangedSignal("UserInputState"):Connect(function()
+			if input.UserInputState == Enum.UserInputState.End then
+				qrtpDragInput = nil
+				conn:Disconnect()
+			end
+		end)
+	end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+	if qrtpDragInput and input == qrtpDragInput then
+		local delta = input.Position - qrtpDragStart
+		if delta.Magnitude > 6 then
+			qrtpHasDragged = true
+		end
+		
+		local scaleFactor = Scale.Scale or 1
+		local targetPos = UDim2.new(
+			qrtpStartPos.X.Scale,
+			qrtpStartPos.X.Offset + (delta.X / scaleFactor),
+			qrtpStartPos.Y.Scale,
+			qrtpStartPos.Y.Offset + (delta.Y / scaleFactor)
+		)
+		
+		TweenService:Create(QuickRandomTPBtn, TweenInfo.new(0.06, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+			Position = targetPos
+		}):Play()
+	end
+end)
+
+QuickRandomTPBtn.Activated:Connect(function()
+	if not qrtpHasDragged then
+		executeRandomTP()
+	end
+end)
+
+-- LOGIC DRAG HEADER BẢNG CHÍNH
+local mainDragInput = nil
+local mainDragStart, mainStartPos
+
+Header.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		mainDragInput = input
+		mainDragStart = input.Position
+		mainStartPos = Main.Position
+		
+		local conn; conn = input:GetPropertyChangedSignal("UserInputState"):Connect(function()
+			if input.UserInputState == Enum.UserInputState.End then
+				mainDragInput = nil
+				conn:Disconnect()
+			end
+		end)
+	end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+	if mainDragInput and input == mainDragInput then
+		local d = input.Position - mainDragStart
+		local scaleFactor = Scale.Scale or 1
+		Main.Position = UDim2.new(
+			mainStartPos.X.Scale,
+			mainStartPos.X.Offset + (d.X / scaleFactor),
+			mainStartPos.Y.Scale,
+			mainStartPos.Y.Offset + (d.Y / scaleFactor)
+		)
+	end
+end)
+
+LocalPlayer.CharacterAdded:Connect(function()
+	task.wait(.5)
+	if spectating then
+		local h = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+		if h and workspace.CurrentCamera then workspace.CurrentCamera.CameraSubject = h end
+	end
+end)
+
+refresh()
+updateSelected()
